@@ -88,51 +88,57 @@ function dbFindOne(db, collectName, queryData){
 
     });
 }
-function dbResultService(inputResult){
+function findLastItemKey(dbName, collection, query){
+    
     return new Promise(function(resolve, reject){
-        if(!inputResult['dbSearchResult']){
-            inputResult['dbName'].collection(inputResult['collection']).find({}).toArray(function(err, result) {
-                var curItemKey;
-                var data;
-                if (err){
-                    reject(err);
-                }
-
-                curItemKey = result.sort(function(a, b){
-                    return +b['url_key'] - (+a['url_key']);
-                })[0];
-
-                if(!curItemKey){
-                    curItemKey = 1;
-                }else{
-                    curItemKey= +curItemKey["url_key"] +1;
-                }
-
-                data = dbRelatedFunc.set(inputResult['query'], localModule.pad(curItemKey));
-
-                resolve({insertData: data, dbName: inputResult['dbName'], collection: inputResult['collection']});
-            });
-        }else{
-            reject(new Error(JSON.stringify(dbRelatedFunc.get(inputResult['dbSearchResult']))));
+      dbName.collection(collection).find({}).toArray(function(err, result) {
+        var curItemKey;
+        var data;
+        if (err){
+            reject(err);
         }
 
-    });
-}
+        curItemKey = result.sort(function(a, b){
+            return +b['url_key'] - (+a['url_key']);
+        })[0];
 
+        if(!curItemKey){
+            curItemKey = 1;
+        }else{
+            curItemKey= +curItemKey["url_key"] +1;
+        }
+
+        data = dbRelatedFunc.set(query, localModule.pad(curItemKey));
+
+        resolve({insertData: data, dbName: dbName, collection: collection});
+    })
+    });
+
+}
 function dbInsertData(inputResult){
+  console.log('dbInsertData');
     return new Promise(function(resolve, reject){
         inputResult['dbName'].collection(inputResult['collection']).insertOne( inputResult['insertData'], function(err, res) {
             if(err) {
                 console.log("err2");
                 reject(err);
             }else{
-                var retRes = JSON.stringify(dbRelatedFunc.get(res.ops[0]));
-
-                resolve(retRes);
+                
+                resolve(dbRelatedFunc.get(res.ops[0]));
 
             }
         });
     });
+
+}
+
+function dbResultService(inputResult) {
+
+    if (!inputResult['dbSearchResult']) {
+        return findLastItemKey(inputResult['dbName'], inputResult['collection'], inputResult['query']).then(dbInsertData);
+    } else {
+        return Promise.resolve(dbRelatedFunc.get(inputResult['dbSearchResult']));
+    }
 
 }
 
@@ -180,10 +186,8 @@ app.route("/new/*").get(function (request, response) {
         return dbFindOne(db, 'urlBase', request.params[0]);
     }).then(function(result){
         return dbResultService(result);
-    }).then(function(data){
-        return dbInsertData(data);
     }).then(function(res){
-        response.send(res);
+        response.send(JSON.stringify(res));
     }).catch(function(err){
         console.log(err);
         response.send(err.message);
