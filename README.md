@@ -1,4 +1,4 @@
-FreeCodeCamp API Project: URL Shortener Microservice
+API Project: URL Shortener Microservice
 =========================
 
 Example creation usage:
