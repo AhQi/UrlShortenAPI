@@ -3,162 +3,17 @@
 
 // init project
 var express = require('express');
+var shortid = require('shortid');
 var app = express();
-//===========================self defined API===================================
-var localModule = (function(){
-    return {
-        pad: function(num){
-          num = num.toString();
-          while(num.length < 4){
-            num = "0".concat(num);
-          }
-          console.log(num);
-          return num;
-        }
-    }
-})();
 
-var dbRelatedFunc = (function(){
-    return {
-        set: function(oriUrl, key){
-          var dbEntry = {};
-          
-          dbEntry["original_url"] = oriUrl;
-          dbEntry["short_url"] = 'https://url-sorten.glitch.me/'+key;
-          dbEntry["url_key"] = key;
 
-          return dbEntry;
-          
-        },
-        get: function(dbEty){
-          var dbEntry = {};
-          dbEntry["original_url"] = dbEty["original_url"];
-          dbEntry["short_url"] = dbEty["short_url"];
-          
-          return dbEntry;
-        }
-    }
-})();
-//=============================MongoDB initialization===========================/
-//lets require/import the mongodb native drivers.
-var mongodb = require('mongodb');
-
-//We need to work with "MongoClient" interface in order to connect to a mongodb server.
-var MongoClient = mongodb.MongoClient;
 
 // Connection URL. This is where your mongodb server is running.
-
-//(Focus on This Variable)
-var url = 'mongodb://'+process.env.DB_USER_NAME+':'+process.env.DB_USER_PASSWORD+'@'+process.env.HOST+':'+process.env.DB_PORT+'/'+process.env.DB;      
-//(Focus on This Variable)
+var redisClient = require("redis").createClient('13321', 'redis-13321.c1.us-west-2-2.ec2.cloud.redislabs.com');
+redisClient.auth('lwin1POoSHWv4vfp5QyPnaSw4nYObI9e');
 
 
-function dbConnect(url){
-    return new Promise(function(resolve, reject){
-        MongoClient.connect(url, function(err, db){
-            if(!err){
-                console.log('Connection established to', url);
-                resolve(db);
-            }else{
-                reject(err);
-            }
-        });
-    });
-}
 
-
-function dbFindOne(db, collectName, queryData){
-    return new Promise(function(resolve, reject){
-        var regExp = /^https?:\/{2}/;
-        if(regExp.test(queryData)){
-            console.log("valid url format");
-            db.collection(collectName).findOne({"original_url":queryData}, function(err, result){
-                if(err) {
-                    console.log("find operation err");
-                    reject(err);
-                }
-                else{
-                    resolve({dbSearchResult: result, dbName: db, collection: collectName, query: queryData});
-                }
-            });
-        }else{
-            console.log('invalid url');
-            reject(new Error('invalid url format'));
-        }
-
-    });
-}
-function findLastItemKey(dbName, collection, query){
-    
-    return new Promise(function(resolve, reject){
-      dbName.collection(collection).find({}).toArray(function(err, result) {
-        var curItemKey;
-        var data;
-        if (err){
-            reject(err);
-        }
-
-        curItemKey = result.sort(function(a, b){
-            return +b['url_key'] - (+a['url_key']);
-        })[0];
-
-        if(!curItemKey){
-            curItemKey = 1;
-        }else{
-            curItemKey= +curItemKey["url_key"] +1;
-        }
-
-        data = dbRelatedFunc.set(query, localModule.pad(curItemKey));
-
-        resolve({insertData: data, dbName: dbName, collection: collection});
-    })
-    });
-
-}
-function dbInsertData(inputResult){
-  console.log('dbInsertData');
-    return new Promise(function(resolve, reject){
-        inputResult['dbName'].collection(inputResult['collection']).insertOne( inputResult['insertData'], function(err, res) {
-            if(err) {
-                console.log("err2");
-                reject(err);
-            }else{
-                
-                resolve(dbRelatedFunc.get(res.ops[0]));
-
-            }
-        });
-    });
-
-}
-
-function dbResultService(inputResult) {
-
-    if (!inputResult['dbSearchResult']) {
-        return findLastItemKey(inputResult['dbName'], inputResult['collection'], inputResult['query']).then(dbInsertData);
-    } else {
-        return Promise.resolve(dbRelatedFunc.get(inputResult['dbSearchResult']));
-    }
-
-}
-
-dbConnect(url).then(function(db){
-    db.createCollection("urlBase", function(err, res){
-        if(err){
-            throw err;
-        }
-        console.log("create collect");
-
-        //db.close();
-    });
-});
-
-//=================================================================================
-
-// we've started you off with Express, 
-// but feel free to use whatever libs or frameworks you'd like through `package.json`.
-
-// http://expressjs.com/en/starter/static-files.html
 app.use(express.static('public'));
 
 // http://expressjs.com/en/starter/basic-routing.html
@@ -167,31 +22,35 @@ app.get("/", function (request, response) {
 });
 
 app.route("/:shortUrl").get(function (request, response) {
-  //response.send("https://"+request.headers['x-forwarded-host']+'/'+request.params.shortUrl);
-  MongoClient.connect(url, function (err, db) {
-    db.collection('urlBase').findOne({"url_key":request.params.shortUrl}, function(err, result){
-      if(result){
-        response.redirect(result['original_url']);
-      }else{
-        response.send("It's not a valid URL.");
-      }
-    });
+  redisClient.get( request.params.shortUrl, function( err, reply ){
+    if(err){
+      console.log('invalid url');
+      return response.send('err');
+    }
+    response.redirect(reply);
+    //console.log( reply.toString() ); // 新增會回傳 value
   });
   
 });
 
 
 app.route("/new/*").get(function (request, response) {
-    dbConnect(url).then(function(db){
-        return dbFindOne(db, 'urlBase', request.params[0]);
-    }).then(function(result){
-        return dbResultService(result);
-    }).then(function(res){
-        response.send(JSON.stringify(res));
-    }).catch(function(err){
-        console.log(err);
-        response.send(err.message);
-    });
+    
+    var regExp = /^https?:\/{2}/;
+        if(regExp.test(request.params[0])){
+            console.log("valid url format");
+            var newShortUrl = shortid.generate();
+          
+            redisClient.set( newShortUrl, request.params[0], function( err, reply ){
+              var ret = { "original_url": request.params[0], "short_url":"https://url-shorten-service.glitch.me/"+ newShortUrl}
+              response.send( JSON.stringify(ret) ); // 新增成功會回傳 ok
+            });
+            
+        }else{
+            response.send('invalid url');
+            
+        }
+    
     
 });
 
